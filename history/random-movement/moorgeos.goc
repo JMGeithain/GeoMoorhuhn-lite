@@ -1,0 +1,304 @@
+/*
+ * MOORGEOS - native FreeGEOS prototype.
+ *
+ * Stage 2: move the scene into a GenView/VisContent tree and receive
+ * mouse-select events on the board. This source remains uncompiled until
+ * the user's FreeGEOS SDK/toolchain is available for a real build.
+ */
+
+@include <stdapp.goh>
+#include <graphics.h>
+#include <timer.h>
+@include "moorgeos.goh"
+
+@class MoorGEOSProcessClass, GenProcessClass;
+@endc
+@classdecl MoorGEOSProcessClass, neverSaved;
+@classdecl MoorGEOSBoardClass;
+
+@start AppResource;
+
+@object GenApplicationClass MoorGEOSApp = {
+    GI_visMoniker = list { @MoorGEOSTitle };
+    GI_comp = @MoorGEOSPrimary;
+    gcnList(MANUFACTURER_ID_GEOWORKS, GAGCNLT_WINDOWS) = @MoorGEOSPrimary;
+}
+
+@visMoniker MoorGEOSTitle = "MoorGEOS";
+
+@end AppResource;
+
+@start Interface;
+
+@object GenPrimaryClass MoorGEOSPrimary = {
+    GI_comp = @MoorGEOSView, @MoorGEOSGameMenu;
+    HINT_SIZE_WINDOW_AS_DESIRED;
+}
+
+@object GenViewClass MoorGEOSView = {
+    GVI_content = MoorGEOSBoard;
+    GVI_docBounds = {0, 0, 320, 200};
+    GVI_color = { C_CYAN, 0, 0, 0 };
+    GVI_horizAttrs = @default | GVDA_NO_LARGER_THAN_CONTENT
+                               | GVDA_NO_SMALLER_THAN_CONTENT;
+    GVI_vertAttrs = @default | GVDA_NO_LARGER_THAN_CONTENT
+                             | GVDA_NO_SMALLER_THAN_CONTENT
+                             | GVDA_KEEP_ASPECT_RATIO;
+    ATTR_GEN_VIEW_DOES_NOT_ACCEPT_TEXT_INPUT;
+}
+
+@object GenInteractionClass MoorGEOSGameMenu = {
+    GI_visMoniker = "Spiel";
+    GI_comp = @MoorGEOSNewGame;
+    GII_visibility = GIV_POPUP;
+}
+
+@object GenTriggerClass MoorGEOSNewGame = {
+    GI_visMoniker = "Neues Spiel";
+    GTI_destination = MoorGEOSBoard;
+    GTI_actionMsg = MSG_MOORGEOS_NEW_GAME;
+}
+
+@end Interface;
+
+@start BoardBlock;
+
+@object MoorGEOSBoardClass MoorGEOSBoard = {
+    VI_bounds = {0, 0, 320, 200};
+}
+
+@end BoardBlock;
+
+/*
+ * Draw a simple original placeholder scene. The target is a geometric
+ * silhouette only; no original Moorhuhn art or sounds are used.
+ */
+@method MoorGEOSBoardClass, MSG_VIS_DRAW
+{
+    word targetLeft;
+
+    GrSetMixMode(gstate, MM_COPY);
+
+    /* Sky and grass. */
+    GrSetAreaColor(gstate, CF_INDEX, C_CYAN, 0, 0);
+    GrFillRect(gstate, 0, 0, 319, 119);
+
+    GrSetAreaColor(gstate, CF_INDEX, C_GREEN, 0, 0);
+    GrFillRect(gstate, 0, 120, 319, 199);
+
+    /* A simple sun and two ground lines make the scene easier to read. */
+    GrSetAreaColor(gstate, CF_INDEX, C_YELLOW, 0, 0);
+    GrFillEllipse(gstate, 20, 14, 43, 37);
+
+    GrSetLineColor(gstate, CF_INDEX, C_GREEN, 0, 0);
+    GrDrawHLine(gstate, 0, 126, 319);
+    GrDrawHLine(gstate, 0, 163, 319);
+
+    /* Status panel with readable numeric score and remaining seconds. */
+    GrSetAreaColor(gstate, CF_INDEX, C_BLACK, 0, 0);
+    GrFillRect(gstate, 4, 4, 126, 40);
+    GrSetTextColor(gstate, CF_INDEX, C_WHITE, 0, 0);
+    GrDrawText(gstate, 8, 7, "Punkte", 6);
+    GrDrawText(gstate, 8, 17, "Fehl", 4);
+    GrDrawText(gstate, 8, 27, "Zeit", 4);
+    {
+        word i;
+        word scoreValue = pself->MGBI_score;
+        word missesValue = pself->MGBI_misses;
+        word secondsValue = pself->MGBI_secondsLeft;
+        char digitText[2];
+        /* Five score digits, including leading zeroes, fit inside the panel. */
+        GrSetTextColor(gstate, CF_INDEX, C_YELLOW, 0, 0);
+        for (i = 0; i < 5; i++) {
+            word divisor = 1;
+            word j;
+            for (j = i + 1; j < 5; j++) divisor *= 10;
+            digitText[0] = '0' + ((scoreValue / divisor) % 10);
+            digitText[1] = 0;
+            GrDrawText(gstate, 62 + (i * 8), 7, digitText, 1);
+        }
+        /* Miss count is capped visually at 99 to keep the panel compact. */
+        if (missesValue > 99) missesValue = 99;
+        GrSetTextColor(gstate, CF_INDEX, C_RED, 0, 0);
+        digitText[0] = '0' + ((missesValue / 10) % 10);
+        digitText[1] = 0;
+        GrDrawText(gstate, 62, 17, digitText, 1);
+        digitText[0] = '0' + (missesValue % 10);
+        GrDrawText(gstate, 70, 17, digitText, 1);
+        GrSetTextColor(gstate, CF_INDEX, C_WHITE, 0, 0);
+        digitText[0] = '0' + ((secondsValue / 10) % 10);
+        GrDrawText(gstate, 62, 27, digitText, 1);
+        digitText[0] = '0' + (secondsValue % 10);
+        GrDrawText(gstate, 70, 27, digitText, 1);
+    }
+
+    /* Select among three predefined target positions. */
+    switch (pself->MGBI_targetPosition) {
+        case 0: targetLeft = 38; break;
+        case 1: targetLeft = 125; break;
+        default: targetLeft = 222; break;
+    }
+
+    GrSetAreaColor(gstate, CF_INDEX, C_BLACK, 0, 0);
+    GrFillRect(gstate, targetLeft + 24, 82, targetLeft + 53, 119);
+    GrFillEllipse(gstate, targetLeft + 30, 63, targetLeft + 47, 81);
+    GrFillRect(gstate, targetLeft, 91, targetLeft + 24, 99);
+    GrFillRect(gstate, targetLeft + 53, 91, targetLeft + 77, 99);
+
+    /* Context message: show the player how to start or restart. */
+    if (!pself->MGBI_gameActive && !pself->MGBI_gameFinished) {
+        GrSetAreaColor(gstate, CF_INDEX, C_BLACK, 0, 0);
+        GrFillRect(gstate, 66, 171, 254, 190);
+        GrSetTextColor(gstate, CF_INDEX, C_WHITE, 0, 0);
+        GrDrawText(gstate, 78, 178, "KLICK ZUM START", 15);
+    } else if (pself->MGBI_gameActive && pself->MGBI_lastShotState != 0) {
+        GrSetAreaColor(gstate, CF_INDEX, C_BLACK, 0, 0);
+        GrFillRect(gstate, 108, 171, 212, 190);
+        if (pself->MGBI_lastShotState == 1) {
+            GrSetTextColor(gstate, CF_INDEX, C_YELLOW, 0, 0);
+            GrDrawText(gstate, 130, 178, "TREFFER!", 8);
+        } else {
+            GrSetTextColor(gstate, CF_INDEX, C_RED, 0, 0);
+            GrDrawText(gstate, 132, 178, "DANEBEN", 7);
+        }
+    }
+
+    /* Clear end-of-round message over the playfield when the clock expires. */
+    if (pself->MGBI_gameFinished) {
+        GrSetAreaColor(gstate, CF_INDEX, C_BLACK, 0, 0);
+        GrFillRect(gstate, 91, 143, 229, 163);
+        GrSetTextColor(gstate, CF_INDEX, C_WHITE, 0, 0);
+        GrDrawText(gstate, 104, 149, "SPIEL VORBEI", 12);
+        GrDrawText(gstate, 78, 178, "NEUES SPIEL IM MENUE", 19);
+    }
+
+    @callsuper();
+}
+
+/* Start the round clock only once the player first clicks the board. */
+@method MoorGEOSBoardClass, MSG_META_START_SELECT
+{
+    word targetLeft;
+    byte hitTarget = 0;
+
+    if (pself->MGBI_gameFinished) {
+        retVal->flags = MRF_PROCESSED;
+        return;
+    }
+
+    if (!pself->MGBI_gameActive) {
+        pself->MGBI_gameActive = 1;
+        pself->MGBI_secondsLeft = 60;
+        pself->MGBI_timerHandle = TimerStart(
+            TIMER_EVENT_CONTINUAL, oself, 60,
+            MSG_MOORGEOS_TIMER_TICK, 60,
+            &pself->MGBI_timerID);
+    }
+
+    switch (pself->MGBI_targetPosition) {
+        case 0: targetLeft = 38; break;
+        case 1: targetLeft = 125; break;
+        default: targetLeft = 222; break;
+    }
+
+    /*
+     * Test the visible target parts instead of its entire 78x57 envelope.
+     * The head uses its ellipse's bounding rectangle as a simple approximation.
+     */
+    if ((xPosition >= targetLeft + 24) &&
+        (xPosition <= targetLeft + 53) &&
+        (yPosition >= 82) && (yPosition <= 119)) {
+        hitTarget = 1;                 /* body */
+    }
+    if ((xPosition >= targetLeft + 30) &&
+        (xPosition <= targetLeft + 47) &&
+        (yPosition >= 63) && (yPosition <= 81)) {
+        hitTarget = 1;                 /* head */
+    }
+    if ((xPosition >= targetLeft) &&
+        (xPosition <= targetLeft + 24) &&
+        (yPosition >= 91) && (yPosition <= 99)) {
+        hitTarget = 1;                 /* left wing */
+    }
+    if ((xPosition >= targetLeft + 53) &&
+        (xPosition <= targetLeft + 77) &&
+        (yPosition >= 91) && (yPosition <= 99)) {
+        hitTarget = 1;                 /* right wing */
+    }
+
+    if (hitTarget) {
+        pself->MGBI_lastShotState = 1;
+        /* Keep the 16-bit score from wrapping; the five-digit HUD can show it. */
+        if (pself->MGBI_score <= 65520) {
+            pself->MGBI_score += 10;
+        }
+        {
+            /* LFSR selects either of the other two positions. */
+            word rng = pself->MGBI_rngState;
+            pself->MGBI_rngState = (rng >> 1) ^
+                ((0 - (rng & 1)) & 0xB400);
+            pself->MGBI_targetPosition =
+                (pself->MGBI_targetPosition + 1 +
+                 (pself->MGBI_rngState & 1)) % 3;
+        }
+    } else {
+        pself->MGBI_lastShotState = 2;
+        /* The HUD is two digits wide, so saturate the miss count at 99. */
+        if (pself->MGBI_misses < 99) {
+            pself->MGBI_misses++;
+        }
+    }
+
+    @send self::MSG_VIS_INVALIDATE();
+    retVal->flags = MRF_PROCESSED;
+}
+
+/* One timer event per second; move unpredictably and stop at zero. */
+@method MoorGEOSBoardClass, MSG_MOORGEOS_TIMER_TICK
+{
+    if (pself->MGBI_gameActive && pself->MGBI_secondsLeft > 0) {
+        pself->MGBI_secondsLeft--;
+        pself->MGBI_moveCounter++;
+        if (pself->MGBI_moveCounter >= 2 && pself->MGBI_secondsLeft > 0) {
+            pself->MGBI_moveCounter = 0;
+            {
+            /* LFSR selects either of the other two positions. */
+            word rng = pself->MGBI_rngState;
+            pself->MGBI_rngState = (rng >> 1) ^
+                ((0 - (rng & 1)) & 0xB400);
+            pself->MGBI_targetPosition =
+                (pself->MGBI_targetPosition + 1 +
+                 (pself->MGBI_rngState & 1)) % 3;
+        }
+        }
+        if (pself->MGBI_secondsLeft == 0) {
+            pself->MGBI_gameActive = 0;
+            pself->MGBI_gameFinished = 1;
+            TimerStop(pself->MGBI_timerHandle, pself->MGBI_timerID);
+            pself->MGBI_timerHandle = 0;
+            pself->MGBI_timerID = 0;
+        }
+        @send self::MSG_VIS_INVALIDATE();
+    }
+}
+
+/* Reset all prototype state when the user chooses Spiel > Neues Spiel. */
+@method MoorGEOSBoardClass, MSG_MOORGEOS_NEW_GAME
+{
+    pself->MGBI_score = 0;
+    pself->MGBI_misses = 0;
+    pself->MGBI_targetPosition = 0;
+    pself->MGBI_secondsLeft = 60;
+    pself->MGBI_moveCounter = 0;
+    pself->MGBI_gameActive = 0;
+    pself->MGBI_gameFinished = 0;
+    pself->MGBI_lastShotState = 0;
+    pself->MGBI_rngState = 0xACE1;
+    if (pself->MGBI_timerHandle) {
+        TimerStop(pself->MGBI_timerHandle, pself->MGBI_timerID);
+        pself->MGBI_timerHandle = 0;
+        pself->MGBI_timerID = 0;
+    }
+
+    @send self::MSG_VIS_INVALIDATE();
+}
